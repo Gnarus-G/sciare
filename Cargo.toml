@@ -6,7 +6,15 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+sqlx = { version = "0.7", features = [
+  "runtime-tokio",
+  "tls-native-tls",
+  "sqlite",
+  "chrono",
+] }
 clap = { version = "4.5.1", features = ["derive"] }
 clap_complete = "4.5.1"
 color-eyre = "0.6.2"
 poppler = "0.4.0"
+chrono = "0.4.34"
+tokio = { version = "1.36.0", features = ["rt", "macros"] }
