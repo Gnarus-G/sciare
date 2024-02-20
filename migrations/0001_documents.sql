@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS chunk (
   document_name VARCHAR(250) NOT NULL, 
   page_number INTEGER NOT NULL,
   content TEXT NOT NULL, 
-  content_embedding TEXT NOT NULL,
+  content_embedding BLOB NOT NULL,
   saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
   FOREIGN KEY (document_name) REFERENCES document(name)
 );

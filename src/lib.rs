@@ -13,9 +13,9 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    pub fn complete_with(self, embedding: Vec<f64>) -> CompleteChunk {
+    fn complete_with(self, embedding_blob: VectorEmbeddingBlob) -> CompleteChunk {
         CompleteChunk {
-            content_embedding: format!("{:?}", embedding),
+            content_embedding: embedding_blob,
             document_name: self.document_name,
             page_number: self.page_number,
             content: self.content,
@@ -53,11 +53,48 @@ impl VectorEmbedding {
     }
 }
 
-pub struct CompleteChunk {
+/// The blob representing vector embeddings that we can save in sqlite.
+#[repr(transparent)]
+struct VectorEmbeddingBlob(Vec<u8>);
+
+impl From<Vec<u8>> for VectorEmbeddingBlob {
+    fn from(value: Vec<u8>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&VectorEmbeddingBlob> for VectorEmbedding {
+    fn from(VectorEmbeddingBlob(data): &VectorEmbeddingBlob) -> Self {
+        let floats: Vec<f64> = data
+            .chunks(8)
+            .map(|bytes| {
+                f64::from_be_bytes([
+                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                ])
+            })
+            .collect();
+
+        Self(floats)
+    }
+}
+
+impl From<VectorEmbedding> for VectorEmbeddingBlob {
+    fn from(value: VectorEmbedding) -> Self {
+        let bytes = value
+            .0
+            .into_iter()
+            .flat_map(|ha| ha.to_be_bytes())
+            .collect::<Vec<_>>();
+
+        VectorEmbeddingBlob(bytes)
+    }
+}
+
+struct CompleteChunk {
     document_name: String,
     page_number: i64,
     content: String,
-    content_embedding: String,
+    content_embedding: VectorEmbeddingBlob,
 }
 
 impl From<CompleteChunk> for Chunk {
@@ -72,16 +109,7 @@ impl From<CompleteChunk> for Chunk {
 
 impl CompleteChunk {
     fn get_embedding(&self) -> VectorEmbedding {
-        let embedding = self.content_embedding[1..self.content_embedding.len() - 1]
-            .split(',')
-            .map(|n| {
-                n.trim()
-                    .parse::<f64>()
-                    .expect("should only be number in the array for embeddings")
-            })
-            .collect();
-
-        VectorEmbedding(embedding)
+        VectorEmbedding::from(&self.content_embedding)
     }
 }
 
@@ -161,7 +189,7 @@ pub async fn save_document(conn_pool: &SqlitePool, file_path: &Path) -> color_ey
             .bind(chunk.document_name)
             .bind(chunk.page_number)
             .bind(chunk.content)
-            .bind(chunk.content_embedding);
+            .bind(chunk.content_embedding.0);
     }
 
     q.execute(conn_pool).await?;
@@ -204,7 +232,7 @@ mod llm {
     use ollama_rs::Ollama;
     use tokio::task::JoinSet;
 
-    use crate::{Chunk, CompleteChunk};
+    use crate::{Chunk, CompleteChunk, VectorEmbedding};
 
     pub async fn create_embeddings(ollama: Ollama, chunks: Vec<Chunk>) -> Vec<CompleteChunk> {
         let mut set = JoinSet::new();
@@ -219,7 +247,7 @@ mod llm {
                     .generate_embeddings("llama2:latest".to_string(), chunk.content.clone(), None)
                     .await;
 
-                result.map(|em| chunk.complete_with(em.embeddings))
+                result.map(|em| chunk.complete_with(VectorEmbedding(em.embeddings).into()))
             };
 
             set.spawn(task_future);
