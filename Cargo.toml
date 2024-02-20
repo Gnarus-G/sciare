@@ -17,4 +17,5 @@ clap_complete = "4.5.1"
 color-eyre = "0.6.2"
 poppler = "0.4.0"
 chrono = "0.4.34"
-tokio = { version = "1.36.0", features = ["rt", "macros"] }
+tokio = { version = "1.36.0", features = ["rt-multi-thread", "macros"] }
+ollama-rs = "0.1.6"

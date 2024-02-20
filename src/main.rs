@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use sciare::save_document;
-use sqlx::SqlitePool;
-use std::path::PathBuf;
+use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
+use std::{path::PathBuf, str::FromStr};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -19,7 +19,7 @@ enum CliCommand {
     },
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
 
@@ -27,7 +27,9 @@ async fn main() -> color_eyre::Result<()> {
 
     match cli.command {
         CliCommand::Upload { file } => {
-            let db_connection = SqlitePool::connect("sqlite:./data.db").await?;
+            let options = SqliteConnectOptions::from_str("sqlite:./data.db")?;
+            let db_connection = SqlitePool::connect_with(options).await?;
+
             save_document(&db_connection, &file).await?;
         }
     };
