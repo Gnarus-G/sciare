@@ -114,6 +114,7 @@ impl CompleteChunk {
 pub async fn search_documents(
     conn_pool: &SqlitePool,
     phrase: String,
+    limit: usize,
 ) -> color_eyre::Result<Vec<Chunk>> {
     let ollama = Ollama::new("http://localhost".to_string(), 11434);
 
@@ -147,6 +148,7 @@ pub async fn search_documents(
 
     let chunks = chunks
         .into_iter()
+        .take(limit)
         .inspect(|(sim, _)| eprintln!("[DEBUG] found content with similarity score {}", sim))
         .map(|(_, chunk)| chunk)
         .collect();

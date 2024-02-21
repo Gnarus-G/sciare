@@ -26,8 +26,14 @@ enum CliCommand {
         url: Url,
     },
 
+    /// Search across all the content saved.
     Search {
+        /// Search-phrase by which to match semantically.
         phrase: String,
+
+        #[arg(short, long, default_value = "5")]
+        /// Maximum number of document chunks to consider as matches.
+        limit: usize,
     },
 }
 
@@ -90,8 +96,8 @@ async fn main() -> color_eyre::Result<()> {
             )
             .await?;
         }
-        CliCommand::Search { phrase } => {
-            let chunks = search_documents(&db_connection, phrase).await?;
+        CliCommand::Search { phrase, limit } => {
+            let chunks = search_documents(&db_connection, phrase, limit).await?;
 
             for chunk in chunks {
                 println!("-----------------");
