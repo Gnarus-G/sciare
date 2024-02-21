@@ -31,7 +31,7 @@ enum CliCommand {
         /// Search-phrase by which to match semantically.
         phrase: String,
 
-        #[arg(short, long, default_value = "5")]
+        #[arg(short, long, default_value = "20")]
         /// Maximum number of document chunks to consider as matches.
         limit: usize,
     },
