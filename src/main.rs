@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use poppler::PopplerDocument;
 use reqwest::Url;
-use sciare::{save_document, search_documents};
+use sciare::{document_kind::PdfDocument, save_document, search_documents};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{path::PathBuf, str::FromStr};
 
@@ -56,8 +56,7 @@ async fn main() -> color_eyre::Result<()> {
 
             save_document(
                 &db_connection,
-                name,
-                PopplerDocument::new_from_file(&file, None)?,
+                &PdfDocument::new(name, PopplerDocument::new_from_file(&file, None)?),
             )
             .await?;
         }
@@ -91,8 +90,7 @@ async fn main() -> color_eyre::Result<()> {
 
             save_document(
                 &db_connection,
-                &name,
-                PopplerDocument::new_from_data(&mut data, None)?,
+                &PdfDocument::new(&name, PopplerDocument::new_from_data(&mut data, None)?),
             )
             .await?;
         }

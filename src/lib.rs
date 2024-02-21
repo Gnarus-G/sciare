@@ -1,115 +1,7 @@
-use color_eyre::eyre::{Context, ContextCompat};
+use color_eyre::eyre::Context;
 use ollama_rs::Ollama;
-use poppler::PopplerDocument;
+use primitives::*;
 use sqlx::SqlitePool;
-
-#[derive(Debug)]
-pub struct Chunk {
-    pub document_name: String,
-    pub page_number: i64,
-    pub content: String,
-}
-
-impl Chunk {
-    fn complete_with(self, embedding_blob: VectorEmbeddingBlob) -> CompleteChunk {
-        CompleteChunk {
-            content_embedding: embedding_blob,
-            document_name: self.document_name,
-            page_number: self.page_number,
-            content: self.content,
-        }
-    }
-}
-
-struct VectorEmbedding(Vec<f64>);
-
-impl VectorEmbedding {
-    fn similarity_with(&self, other_embedding: &VectorEmbedding) -> f64 {
-        let n = self.0.len();
-
-        let mut dot_product = 0f64;
-
-        for i in 0..n {
-            let a = self.0[i];
-            let b = other_embedding.0[i];
-
-            dot_product += a * b
-        }
-
-        let mut a_squares = 0f64;
-        let mut b_squares = 0f64;
-
-        for i in 0..n {
-            let a = self.0[i];
-            let b = other_embedding.0[i];
-
-            a_squares += a.powi(2);
-            b_squares += b.powi(2);
-        }
-
-        dot_product / (a_squares.sqrt() * b_squares.sqrt())
-    }
-}
-
-/// The blob representing vector embeddings that we can save in sqlite.
-#[repr(transparent)]
-struct VectorEmbeddingBlob(Vec<u8>);
-
-impl From<Vec<u8>> for VectorEmbeddingBlob {
-    fn from(value: Vec<u8>) -> Self {
-        Self(value)
-    }
-}
-
-impl From<&VectorEmbeddingBlob> for VectorEmbedding {
-    fn from(VectorEmbeddingBlob(data): &VectorEmbeddingBlob) -> Self {
-        let floats: Vec<f64> = data
-            .chunks(8)
-            .map(|bytes| {
-                f64::from_be_bytes([
-                    bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                ])
-            })
-            .collect();
-
-        Self(floats)
-    }
-}
-
-impl From<VectorEmbedding> for VectorEmbeddingBlob {
-    fn from(value: VectorEmbedding) -> Self {
-        let bytes = value
-            .0
-            .into_iter()
-            .flat_map(|ha| ha.to_be_bytes())
-            .collect::<Vec<_>>();
-
-        VectorEmbeddingBlob(bytes)
-    }
-}
-
-struct CompleteChunk {
-    document_name: String,
-    page_number: i64,
-    content: String,
-    content_embedding: VectorEmbeddingBlob,
-}
-
-impl From<CompleteChunk> for Chunk {
-    fn from(value: CompleteChunk) -> Self {
-        Self {
-            document_name: value.document_name,
-            page_number: value.page_number,
-            content: value.content,
-        }
-    }
-}
-
-impl CompleteChunk {
-    fn get_embedding(&self) -> VectorEmbedding {
-        VectorEmbedding::from(&self.content_embedding)
-    }
-}
 
 pub async fn search_documents(
     conn_pool: &SqlitePool,
@@ -156,11 +48,12 @@ pub async fn search_documents(
     Ok(chunks)
 }
 
-pub async fn save_document(
+pub async fn save_document<'s>(
     conn_pool: &SqlitePool,
-    name: &str,
-    document: PopplerDocument,
+    document: &'s impl primitives::Document<'s>,
 ) -> color_eyre::Result<()> {
+    let name = document.name();
+
     let maybe_record = sqlx::query!(r#"SELECT rowid from document WHERE name = ?"#, name)
         .fetch_optional(conn_pool)
         .await
@@ -179,14 +72,14 @@ pub async fn save_document(
         .await
         .context("failed to save a document")?;
 
-    let content = get_text_from_pdf(document)?;
+    let content = document.get_text()?;
 
     eprintln!("[INFO] chunking documents");
     let chunks: Vec<_> = content
         .into_iter()
         .enumerate()
         .map(|(idx, c)| Chunk {
-            document_name: name.to_string(),
+            document_name: document.name().to_string(),
             page_number: idx as i64 + 1,
             content: c,
         })
@@ -220,34 +113,6 @@ pub async fn save_document(
     q.execute(conn_pool).await?;
 
     Ok(())
-}
-
-fn get_text_from_pdf(document: PopplerDocument) -> color_eyre::Result<Vec<String>> {
-    let mut texts = vec![];
-
-    let page_numbers = document.get_n_pages();
-
-    for page_num in 0..page_numbers {
-        let page = document.get_page(page_num).context("no such page");
-
-        let maybe_text = page.and_then(|p| {
-            p.get_text()
-                .map(|t| t.to_string())
-                .context("failed to get page text content")
-        });
-
-        match maybe_text {
-            Ok(text) => {
-                texts.push(text);
-            }
-            Err(err) => {
-                eprintln!("failed to get page: {}", page_num);
-                eprintln!("{err:#}");
-            }
-        }
-    }
-
-    Ok(texts)
 }
 
 mod llm {
@@ -296,5 +161,215 @@ mod llm {
         }
 
         created_embeddings
+    }
+}
+
+pub mod document_kind {
+
+    use color_eyre::eyre::ContextCompat;
+    use poppler::PopplerDocument;
+
+    use crate::primitives;
+
+    pub struct PdfDocument {
+        name: String,
+        document: PopplerDocument,
+    }
+
+    impl PdfDocument {
+        pub fn new(name: &str, document: PopplerDocument) -> Self {
+            Self {
+                name: name.to_string(),
+                document,
+            }
+        }
+    }
+
+    impl<'s> primitives::Document<'s> for PdfDocument {
+        fn name(&'s self) -> &'s str {
+            &self.name
+        }
+
+        fn get_number_of_pages(&self) -> usize {
+            self.document.get_n_pages()
+        }
+
+        fn get_page(&self, page_num: usize) -> color_eyre::Result<String> {
+            let page = self.document.get_page(page_num).context("no such page");
+
+            let maybe_text = page.and_then(|p| {
+                p.get_text()
+                    .map(|t| t.to_string())
+                    .context("failed to get page text content")
+            });
+
+            maybe_text
+        }
+    }
+
+    pub struct TextDocument {
+        name: String,
+        content: String,
+    }
+
+    impl TextDocument {
+        pub fn new(name: &str, content: String) -> Self {
+            Self {
+                name: name.to_string(),
+                content,
+            }
+        }
+    }
+
+    impl<'s> primitives::Document<'s> for TextDocument {
+        fn name(&'s self) -> &'s str {
+            &self.name
+        }
+
+        fn get_number_of_pages(&self) -> usize {
+            1
+        }
+
+        fn get_page(&self, _page_num: usize) -> color_eyre::Result<String> {
+            Ok(self.content.clone())
+        }
+    }
+}
+
+mod primitives {
+
+    pub trait Document<'s> {
+        fn name(&'s self) -> &'s str;
+        fn get_number_of_pages(&self) -> usize;
+        fn get_page(&self, page_num: usize) -> color_eyre::Result<String>;
+
+        fn get_text(&self) -> color_eyre::Result<Vec<String>> {
+            let mut texts = vec![];
+
+            let page_numbers = self.get_number_of_pages();
+
+            for page_num in 0..page_numbers {
+                match self.get_page(page_num) {
+                    Ok(text) => {
+                        texts.push(text);
+                    }
+                    Err(err) => {
+                        eprintln!("[ERROR] failed to get page: {}", page_num);
+                        eprintln!("{err:#}");
+                    }
+                }
+            }
+
+            Ok(texts)
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct Chunk {
+        pub document_name: String,
+        pub page_number: i64,
+        pub content: String,
+    }
+
+    impl Chunk {
+        pub fn complete_with(self, embedding_blob: VectorEmbeddingBlob) -> CompleteChunk {
+            CompleteChunk {
+                content_embedding: embedding_blob,
+                document_name: self.document_name,
+                page_number: self.page_number,
+                content: self.content,
+            }
+        }
+    }
+
+    pub struct CompleteChunk {
+        pub document_name: String,
+        pub page_number: i64,
+        pub content: String,
+        pub content_embedding: VectorEmbeddingBlob,
+    }
+
+    impl From<CompleteChunk> for Chunk {
+        fn from(value: CompleteChunk) -> Self {
+            Self {
+                document_name: value.document_name,
+                page_number: value.page_number,
+                content: value.content,
+            }
+        }
+    }
+
+    impl CompleteChunk {
+        pub fn get_embedding(&self) -> VectorEmbedding {
+            VectorEmbedding::from(&self.content_embedding)
+        }
+    }
+
+    pub struct VectorEmbedding(pub Vec<f64>);
+
+    impl VectorEmbedding {
+        pub fn similarity_with(&self, other_embedding: &VectorEmbedding) -> f64 {
+            let n = self.0.len();
+
+            let mut dot_product = 0f64;
+
+            for i in 0..n {
+                let a = self.0[i];
+                let b = other_embedding.0[i];
+
+                dot_product += a * b
+            }
+
+            let mut a_squares = 0f64;
+            let mut b_squares = 0f64;
+
+            for i in 0..n {
+                let a = self.0[i];
+                let b = other_embedding.0[i];
+
+                a_squares += a.powi(2);
+                b_squares += b.powi(2);
+            }
+
+            dot_product / (a_squares.sqrt() * b_squares.sqrt())
+        }
+    }
+
+    /// The blob representing vector embeddings that we can save in sqlite.
+    #[repr(transparent)]
+    pub struct VectorEmbeddingBlob(pub Vec<u8>);
+
+    impl From<Vec<u8>> for VectorEmbeddingBlob {
+        fn from(value: Vec<u8>) -> Self {
+            Self(value)
+        }
+    }
+
+    impl From<&VectorEmbeddingBlob> for VectorEmbedding {
+        fn from(VectorEmbeddingBlob(data): &VectorEmbeddingBlob) -> Self {
+            let floats: Vec<f64> = data
+                .chunks(8)
+                .map(|bytes| {
+                    f64::from_be_bytes([
+                        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
+                        bytes[7],
+                    ])
+                })
+                .collect();
+
+            Self(floats)
+        }
+    }
+
+    impl From<VectorEmbedding> for VectorEmbeddingBlob {
+        fn from(value: VectorEmbedding) -> Self {
+            let bytes = value
+                .0
+                .into_iter()
+                .flat_map(|ha| ha.to_be_bytes())
+                .collect::<Vec<_>>();
+
+            VectorEmbeddingBlob(bytes)
+        }
     }
 }
