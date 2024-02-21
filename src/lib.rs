@@ -1,10 +1,17 @@
 use color_eyre::eyre::Context;
 use ollama_rs::Ollama;
 use primitives::*;
-use sqlx::SqlitePool;
+
+pub mod context {
+    use sqlx::SqlitePool;
+
+    pub struct Context {
+        pub conn_pool: SqlitePool,
+    }
+}
 
 pub async fn search_documents(
-    conn_pool: &SqlitePool,
+    ctx: &context::Context,
     phrase: String,
     limit: usize,
 ) -> color_eyre::Result<Vec<Chunk>> {
@@ -15,7 +22,7 @@ pub async fn search_documents(
         CompleteChunk,
         r#"SELECT document_name, content, page_number, content_embedding FROM chunk"#
     )
-    .fetch_all(conn_pool)
+    .fetch_all(&ctx.conn_pool)
     .await?;
 
     eprintln!("[INFO] generating embeddings for the search-phrase");
@@ -49,13 +56,13 @@ pub async fn search_documents(
 }
 
 pub async fn save_document<'s>(
-    conn_pool: &SqlitePool,
+    ctx: &context::Context,
     document: &'s impl primitives::Document<'s>,
 ) -> color_eyre::Result<()> {
     let name = document.name();
 
     let maybe_record = sqlx::query!(r#"SELECT rowid from document WHERE name = ?"#, name)
-        .fetch_optional(conn_pool)
+        .fetch_optional(&ctx.conn_pool)
         .await
         .context("failed to query if document already exists")?;
 
@@ -68,7 +75,7 @@ pub async fn save_document<'s>(
 
     eprintln!("[INFO] saving the document");
     sqlx::query!(r#"INSERT INTO document (name) VALUES (?)"#, name)
-        .execute(conn_pool)
+        .execute(&ctx.conn_pool)
         .await
         .context("failed to save a document")?;
 
@@ -110,7 +117,7 @@ pub async fn save_document<'s>(
             .bind(chunk.content_embedding.0);
     }
 
-    q.execute(conn_pool).await?;
+    q.execute(&ctx.conn_pool).await?;
 
     Ok(())
 }

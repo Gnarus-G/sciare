@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use poppler::PopplerDocument;
 use reqwest::Url;
-use sciare::{document_kind::PdfDocument, save_document, search_documents};
+use sciare::{context, document_kind::PdfDocument, save_document, search_documents};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{path::PathBuf, str::FromStr};
 
@@ -55,7 +55,9 @@ async fn main() -> color_eyre::Result<()> {
                 .expect("file path should be in valid utf8");
 
             save_document(
-                &db_connection,
+                &context::Context {
+                    conn_pool: db_connection,
+                },
                 &PdfDocument::new(name, PopplerDocument::new_from_file(&file, None)?),
             )
             .await?;
@@ -89,13 +91,22 @@ async fn main() -> color_eyre::Result<()> {
             let mut data = response.bytes().await?.to_vec();
 
             save_document(
-                &db_connection,
+                &context::Context {
+                    conn_pool: db_connection,
+                },
                 &PdfDocument::new(&name, PopplerDocument::new_from_data(&mut data, None)?),
             )
             .await?;
         }
         CliCommand::Search { phrase, limit } => {
-            let chunks = search_documents(&db_connection, phrase, limit).await?;
+            let chunks = search_documents(
+                &context::Context {
+                    conn_pool: db_connection,
+                },
+                phrase,
+                limit,
+            )
+            .await?;
 
             for chunk in chunks {
                 println!("-----------------");
