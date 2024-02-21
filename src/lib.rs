@@ -148,11 +148,23 @@ pub async fn save_document(
     name: &str,
     document: PopplerDocument,
 ) -> color_eyre::Result<()> {
+    let maybe_record = sqlx::query!(r#"SELECT rowid from document WHERE name = ?"#, name)
+        .fetch_optional(conn_pool)
+        .await
+        .context("failed to query if document already exists")?;
+
+    if maybe_record.is_some() {
+        return Err(color_eyre::eyre::anyhow!(
+            "There is already a document '{}' in the database.",
+            name
+        ));
+    }
+
     eprintln!("[INFO] saving the document");
-    sqlx::query!(r#"INSERT INTO document (name) VALUES (?)"#, name,)
+    sqlx::query!(r#"INSERT INTO document (name) VALUES (?)"#, name)
         .execute(conn_pool)
         .await
-        .context("faled to save a document")?;
+        .context("failed to save a document")?;
 
     let content = get_text_from_pdf(document)?;
 
