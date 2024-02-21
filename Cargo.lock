@@ -1522,6 +1522,7 @@ dependencies = [
  "color-eyre",
  "ollama-rs",
  "poppler",
+ "reqwest",
  "sqlx",
  "tokio",
 ]

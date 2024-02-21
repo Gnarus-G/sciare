@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use color_eyre::eyre::{Context, ContextCompat};
 use ollama_rs::Ollama;
 use poppler::PopplerDocument;
@@ -145,20 +143,20 @@ pub async fn search_documents(
     Ok(chunks)
 }
 
-pub async fn save_document(conn_pool: &SqlitePool, file_path: &Path) -> color_eyre::Result<()> {
-    let name = file_path
-        .file_name()
-        .expect("should be a file path, not a directory")
-        .to_str()
-        .expect("file path should be in valid utf8");
-
+pub async fn save_document(
+    conn_pool: &SqlitePool,
+    name: &str,
+    document: PopplerDocument,
+) -> color_eyre::Result<()> {
+    eprintln!("[INFO] saving the document");
     sqlx::query!(r#"INSERT INTO document (name) VALUES (?)"#, name,)
         .execute(conn_pool)
         .await
         .context("faled to save a document")?;
 
-    let content = get_text_from_pdf_file(file_path)?;
+    let content = get_text_from_pdf(document)?;
 
+    eprintln!("[INFO] chunking documents");
     let chunks: Vec<_> = content
         .into_iter()
         .enumerate()
@@ -171,8 +169,10 @@ pub async fn save_document(conn_pool: &SqlitePool, file_path: &Path) -> color_ey
 
     let ollama = Ollama::new("http://localhost".to_string(), 11434);
 
+    eprintln!("[INFO] creating vector embeddings for each chunk");
     let chunks = llm::create_embeddings(ollama, chunks).await;
 
+    eprintln!("[INFO] saving the document chunks");
     let query_string = format!(
         r#"INSERT INTO chunk (document_name, page_number, content, content_embedding) VALUES {}"#,
         chunks
@@ -197,9 +197,8 @@ pub async fn save_document(conn_pool: &SqlitePool, file_path: &Path) -> color_ey
     Ok(())
 }
 
-fn get_text_from_pdf_file(path: &Path) -> color_eyre::Result<Vec<String>> {
+fn get_text_from_pdf(document: PopplerDocument) -> color_eyre::Result<Vec<String>> {
     let mut texts = vec![];
-    let document = PopplerDocument::new_from_file(path, None)?;
 
     let page_numbers = document.get_n_pages();
 
