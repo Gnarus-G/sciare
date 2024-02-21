@@ -117,25 +117,36 @@ pub async fn search_documents(
 ) -> color_eyre::Result<Vec<Chunk>> {
     let ollama = Ollama::new("http://localhost".to_string(), 11434);
 
+    eprintln!("[INFO] fetching all the chunks of documents we have");
     let chunks = sqlx::query_as!(
         CompleteChunk,
-        r#"select document_name, content, page_number, content_embedding from chunk"#
+        r#"SELECT document_name, content, page_number, content_embedding FROM chunk"#
     )
     .fetch_all(conn_pool)
     .await?;
 
+    eprintln!("[INFO] generating embeddings for the search-phrase");
     let phrase_embedding = ollama
         .generate_embeddings("llama2:latest".to_string(), phrase, None)
         .await
         .map(|result| VectorEmbedding(result.embeddings))?;
 
-    let chunks = chunks
+    const SIMILARITY_THRESHOLD: f64 = 0.18;
+    eprintln!("[INFO] selecting only chunks above a score of {SIMILARITY_THRESHOLD} similarity with our search-phrase");
+    let mut chunks = chunks
         .into_iter()
         .map(|chunk| {
             let sim = chunk.get_embedding().similarity_with(&phrase_embedding);
-            (sim, chunk.into())
+            (sim, Chunk::from(chunk))
         })
-        .filter(|&(sim, _)| sim > 0.18)
+        .filter(|&(sim, _)| sim > SIMILARITY_THRESHOLD)
+        .collect::<Vec<_>>();
+
+    eprintln!("[INFO] sorting by similarity score");
+    chunks.sort_by(|(a_sim, _), (b_sim, _)| b_sim.total_cmp(a_sim));
+
+    let chunks = chunks
+        .into_iter()
         .inspect(|(sim, _)| eprintln!("[DEBUG] found content with similarity score {}", sim))
         .map(|(_, chunk)| chunk)
         .collect();
