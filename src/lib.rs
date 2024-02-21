@@ -1,17 +1,20 @@
 use color_eyre::eyre::Context;
 use ollama_rs::Ollama;
 use primitives::*;
+use splits::TextSplitter;
 
 pub mod context {
+    use crate::splits::TextSplitter;
     use sqlx::SqlitePool;
 
-    pub struct Context {
+    pub struct Context<Splitter: TextSplitter> {
         pub conn_pool: SqlitePool,
+        pub splitter: Splitter,
     }
 }
 
-pub async fn search_documents(
-    ctx: &context::Context,
+pub async fn search_documents<Splitter: TextSplitter>(
+    ctx: &context::Context<Splitter>,
     phrase: String,
     limit: usize,
 ) -> color_eyre::Result<Vec<Chunk>> {
@@ -55,8 +58,8 @@ pub async fn search_documents(
     Ok(chunks)
 }
 
-pub async fn save_document<'s>(
-    ctx: &context::Context,
+pub async fn save_document<'s, Splitter: splits::TextSplitter>(
+    ctx: &context::Context<Splitter>,
     document: &'s impl primitives::Document<'s>,
 ) -> color_eyre::Result<()> {
     let name = document.name();
@@ -79,12 +82,17 @@ pub async fn save_document<'s>(
         .await
         .context("failed to save a document")?;
 
-    let content = document.get_text()?;
-
     eprintln!("[INFO] chunking documents");
-    let chunks: Vec<_> = content
+    let chunks: Vec<_> = document
+        .get_text()?
         .into_iter()
         .enumerate()
+        .flat_map(|(page_idx, page)| {
+            ctx.splitter
+                .split_text(page)
+                .into_iter()
+                .map(move |s| (page_idx, s))
+        })
         .map(|(idx, c)| Chunk {
             document_name: document.name().to_string(),
             page_number: idx as i64 + 1,
@@ -168,6 +176,21 @@ mod llm {
         }
 
         created_embeddings
+    }
+}
+
+pub mod splits {
+    pub trait TextSplitter {
+        fn split_text(&self, text: String) -> Vec<String>;
+    }
+
+    pub struct WordSplitter;
+
+    impl TextSplitter for WordSplitter {
+        fn split_text(&self, text: String) -> Vec<String> {
+            let words: Vec<_> = text.split(' ').map(|s| s.to_string()).collect();
+            words.chunks(125).map(|chunk| chunk.join(" ")).collect()
+        }
     }
 }
 
