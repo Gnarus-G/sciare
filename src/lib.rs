@@ -1,25 +1,25 @@
+#![allow(clippy::needless_return)]
+
 use color_eyre::eyre::Context;
-use ollama_rs::Ollama;
 use primitives::*;
 use splits::TextSplitter;
 
 pub mod context {
-    use crate::splits::TextSplitter;
+    use crate::{llm, splits::TextSplitter};
     use sqlx::SqlitePool;
 
-    pub struct Context<Splitter: TextSplitter> {
+    pub struct Context<Splitter: TextSplitter, Llm: llm::Llm> {
         pub conn_pool: SqlitePool,
         pub splitter: Splitter,
+        pub llm: Llm,
     }
 }
 
-pub async fn search_documents<Splitter: TextSplitter>(
-    ctx: &context::Context<Splitter>,
+pub async fn search_documents<Splitter: TextSplitter, Llm: llm::Llm>(
+    ctx: &context::Context<Splitter, Llm>,
     phrase: String,
     limit: usize,
 ) -> color_eyre::Result<Vec<Chunk>> {
-    let ollama = Ollama::new("http://localhost".to_string(), 11434);
-
     eprintln!("[INFO] fetching all the chunks of documents we have");
     let chunks = sqlx::query_as!(
         CompleteChunk,
@@ -29,10 +29,7 @@ pub async fn search_documents<Splitter: TextSplitter>(
     .await?;
 
     eprintln!("[INFO] generating embeddings for the search-phrase");
-    let phrase_embedding = ollama
-        .generate_embeddings("llama2:latest".to_string(), phrase, None)
-        .await
-        .map(|result| VectorEmbedding(result.embeddings))?;
+    let phrase_embedding = ctx.llm.create_embeddings(phrase).await?;
 
     const SIMILARITY_THRESHOLD: f64 = 0.18;
     eprintln!("[INFO] selecting only chunks above a score of {SIMILARITY_THRESHOLD} similarity with our search-phrase");
@@ -58,8 +55,8 @@ pub async fn search_documents<Splitter: TextSplitter>(
     Ok(chunks)
 }
 
-pub async fn save_document<'s, Splitter: splits::TextSplitter>(
-    ctx: &context::Context<Splitter>,
+pub async fn save_document<'s, Splitter: splits::TextSplitter, Llm: llm::Llm>(
+    ctx: &context::Context<Splitter, Llm>,
     document: &'s impl primitives::Document<'s>,
 ) -> color_eyre::Result<()> {
     let name = document.name();
@@ -100,10 +97,8 @@ pub async fn save_document<'s, Splitter: splits::TextSplitter>(
         })
         .collect();
 
-    let ollama = Ollama::new("http://localhost".to_string(), 11434);
-
     eprintln!("[INFO] creating vector embeddings for each chunk");
-    let chunks = llm::create_embeddings(ollama, chunks).await;
+    let chunks = ctx.llm.create_multiple_embeddings(chunks).await;
 
     eprintln!("[INFO] saving the document chunks");
     let query_string = format!(
@@ -130,7 +125,7 @@ pub async fn save_document<'s, Splitter: splits::TextSplitter>(
     Ok(())
 }
 
-mod llm {
+pub mod llm {
     use std::sync::Arc;
 
     use ollama_rs::Ollama;
@@ -138,44 +133,74 @@ mod llm {
 
     use crate::{Chunk, CompleteChunk, VectorEmbedding};
 
-    pub async fn create_embeddings(ollama: Ollama, chunks: Vec<Chunk>) -> Vec<CompleteChunk> {
-        let mut set = JoinSet::new();
+    #[allow(async_fn_in_trait)]
+    pub trait Llm {
+        async fn create_embeddings(&self, text: String) -> color_eyre::Result<VectorEmbedding>;
+        async fn create_multiple_embeddings(&self, chunks: Vec<Chunk>) -> Vec<CompleteChunk>;
+    }
 
-        let ollama_ref = Arc::new(ollama);
+    pub struct OllamaLlm {
+        ollama: Arc<Ollama>,
+        model: String,
+    }
 
-        for chunk in chunks {
-            let ollama = Arc::clone(&ollama_ref);
+    impl OllamaLlm {
+        pub fn new(model: &str, ollama: Ollama) -> Self {
+            Self {
+                ollama: Arc::new(ollama),
+                model: model.to_string(),
+            }
+        }
+    }
 
-            let task_future = async move {
-                let result = ollama
-                    .generate_embeddings("llama2:latest".to_string(), chunk.content.clone(), None)
-                    .await;
+    impl Llm for OllamaLlm {
+        async fn create_embeddings(&self, text: String) -> color_eyre::Result<VectorEmbedding> {
+            let response = self
+                .ollama
+                .generate_embeddings(self.model.clone(), text, None)
+                .await?;
 
-                result.map(|em| chunk.complete_with(VectorEmbedding(em.embeddings).into()))
-            };
-
-            set.spawn(task_future);
+            Ok(VectorEmbedding(response.embeddings))
         }
 
-        let mut created_embeddings = vec![];
+        async fn create_multiple_embeddings(&self, chunks: Vec<Chunk>) -> Vec<CompleteChunk> {
+            let mut future_set = JoinSet::new();
 
-        while let Some(res) = set.join_next().await {
-            match res {
-                Ok(result) => match result {
-                    Ok(value) => {
-                        created_embeddings.push(value);
-                    }
+            for chunk in chunks {
+                let ollama = Arc::clone(&self.ollama);
+                let model = self.model.clone();
+
+                let task_future = async move {
+                    let result = ollama
+                        .generate_embeddings(model, chunk.content.clone(), None)
+                        .await;
+
+                    result.map(|em| chunk.complete_with(VectorEmbedding(em.embeddings).into()))
+                };
+
+                future_set.spawn(task_future);
+            }
+
+            let mut created_embeddings = vec![];
+
+            while let Some(res) = future_set.join_next().await {
+                match res {
+                    Ok(result) => match result {
+                        Ok(value) => {
+                            created_embeddings.push(value);
+                        }
+                        Err(err) => {
+                            eprintln!("[ERROR] failed to created embeddings for a prompt: {err}");
+                        }
+                    },
                     Err(err) => {
                         eprintln!("[ERROR] failed to created embeddings for a prompt: {err}");
                     }
-                },
-                Err(err) => {
-                    eprintln!("[ERROR] failed to created embeddings for a prompt: {err}");
                 }
             }
-        }
 
-        created_embeddings
+            created_embeddings
+        }
     }
 }
 

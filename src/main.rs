@@ -1,7 +1,8 @@
 use clap::{Parser, Subcommand};
+use ollama_rs::Ollama;
 use poppler::PopplerDocument;
 use reqwest::Url;
-use sciare::{context, document_kind::PdfDocument, save_document, search_documents, splits};
+use sciare::{context, document_kind::PdfDocument, llm, save_document, search_documents, splits};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{path::PathBuf, str::FromStr};
 
@@ -49,6 +50,10 @@ async fn main() -> color_eyre::Result<()> {
     let context = context::Context {
         conn_pool: db_connection,
         splitter: splits::WordSplitter,
+        llm: llm::OllamaLlm::new(
+            "llama2:latest",
+            Ollama::new("http://localhost".to_string(), 11434),
+        ),
     };
 
     match cli.command {
