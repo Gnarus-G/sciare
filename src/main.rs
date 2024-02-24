@@ -1,16 +1,39 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use ollama_rs::Ollama;
 use poppler::PopplerDocument;
 use reqwest::Url;
 use sciare::{context, document_kind::PdfDocument, llm, save_document, search_documents, splits};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
-use std::{path::PathBuf, str::FromStr};
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    path::PathBuf,
+    str::FromStr,
+};
 
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
     #[command(subcommand)]
     command: CliCommand,
+
+    #[command(flatten)]
+    ollama: EnableOllama,
+
+    /// The llama model to use (a .gguf file).
+    #[arg(short, long, conflicts_with = "ollama", required = true)]
+    model: Option<PathBuf>,
+}
+
+#[derive(Args)]
+#[group(id = "ollama")]
+struct EnableOllama {
+    /// Use Ollama
+    #[arg(global = true, long = "ollama")]
+    enabled: bool,
+
+    /// Ip address serving Ollama api, assuming port 11434
+    #[arg(global = true, long)]
+    ollama_ip: Option<IpAddr>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -38,7 +61,32 @@ enum CliCommand {
     },
 }
 
-#[tokio::main(flavor = "multi_thread")]
+impl Cli {
+    fn choose_llm(&self) -> Box<dyn llm::Llm> {
+        if self.ollama.enabled {
+            let ip = self
+                .ollama
+                .ollama_ip
+                .unwrap_or(Ipv4Addr::new(127, 0, 0, 1).into())
+                .to_string();
+
+            Box::new(llm::OllamaLlm::new(
+                "llama2:latest",
+                Ollama::new(format!("http://{ip}"), 11434),
+            ))
+        } else {
+            Box::new(llm::LlamaCpp::new(
+                self.model
+                    .clone()
+                    .expect("no llama model provided: clap should have caught this")
+                    .to_str()
+                    .expect("path of the model given should be in valid utf-8"),
+            ))
+        }
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
 
@@ -50,10 +98,7 @@ async fn main() -> color_eyre::Result<()> {
     let context = context::Context {
         conn_pool: db_connection,
         splitter: splits::WordSplitter,
-        llm: llm::OllamaLlm::new(
-            "llama2:latest",
-            Ollama::new("http://localhost".to_string(), 11434),
-        ),
+        llm: cli.choose_llm(),
     };
 
     match cli.command {

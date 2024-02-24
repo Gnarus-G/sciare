@@ -8,15 +8,15 @@ pub mod context {
     use crate::{llm, splits::TextSplitter};
     use sqlx::SqlitePool;
 
-    pub struct Context<Splitter: TextSplitter, Llm: llm::Llm> {
+    pub struct Context<Splitter: TextSplitter> {
         pub conn_pool: SqlitePool,
         pub splitter: Splitter,
-        pub llm: Llm,
+        pub llm: Box<dyn llm::Llm>,
     }
 }
 
-pub async fn search_documents<Splitter: TextSplitter, Llm: llm::Llm>(
-    ctx: &context::Context<Splitter, Llm>,
+pub async fn search_documents<Splitter: TextSplitter>(
+    ctx: &context::Context<Splitter>,
     phrase: String,
     limit: usize,
 ) -> color_eyre::Result<Vec<Chunk>> {
@@ -55,8 +55,8 @@ pub async fn search_documents<Splitter: TextSplitter, Llm: llm::Llm>(
     Ok(chunks)
 }
 
-pub async fn save_document<'s, Splitter: splits::TextSplitter, Llm: llm::Llm>(
-    ctx: &context::Context<Splitter, Llm>,
+pub async fn save_document<'s, Splitter: splits::TextSplitter>(
+    ctx: &context::Context<Splitter>,
     document: &'s impl primitives::Document<'s>,
 ) -> color_eyre::Result<()> {
     let name = document.name();
@@ -126,14 +126,18 @@ pub async fn save_document<'s, Splitter: splits::TextSplitter, Llm: llm::Llm>(
 }
 
 pub mod llm {
-    use std::sync::Arc;
+    use std::{
+        sync::{Arc, Mutex},
+        thread::JoinHandle,
+    };
 
+    use async_trait::async_trait;
     use ollama_rs::Ollama;
     use tokio::task::JoinSet;
 
     use crate::{Chunk, CompleteChunk, VectorEmbedding};
 
-    #[allow(async_fn_in_trait)]
+    #[async_trait]
     pub trait Llm {
         async fn create_embeddings(&self, text: String) -> color_eyre::Result<VectorEmbedding>;
         async fn create_multiple_embeddings(&self, chunks: Vec<Chunk>) -> Vec<CompleteChunk>;
@@ -153,6 +157,7 @@ pub mod llm {
         }
     }
 
+    #[async_trait]
     impl Llm for OllamaLlm {
         async fn create_embeddings(&self, text: String) -> color_eyre::Result<VectorEmbedding> {
             let response = self
@@ -200,6 +205,173 @@ pub mod llm {
             }
 
             created_embeddings
+        }
+    }
+
+    pub struct LlamaCpp {
+        emmbeddings_channel: Arc<Mutex<channel::ChannelPipe<String, VectorEmbedding>>>,
+        spawn_thread: JoinHandle<()>,
+    }
+
+    impl LlamaCpp {
+        pub fn new(model: &str) -> Self {
+            let model = model.to_string();
+            use llama_cpp_rs::{options::*, LLama};
+
+            let (from_main_thread, from_llama_thread) =
+                channel::duplex_channel::<String, VectorEmbedding>();
+
+            let joinhandle = std::thread::spawn(move || {
+                let llama = LLama::new(
+                    model,
+                    &ModelOptions {
+                        context_size: 2048,
+                        embeddings: true,
+                        n_gpu_layers: 32,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+
+                while let Ok(prompt) = from_llama_thread.receiver.recv() {
+                    eprintln!("[DEBUG] received prompt in llama_cpp thread");
+                    let mut predict_options = PredictOptions {
+                        threads: 14,
+                        temperature: 0.7,
+                        penalty: 1.1,
+                        ..Default::default()
+                    };
+
+                    let embeddings = llama
+                        .embeddings(prompt, &mut predict_options)
+                        .map_err(|err| color_eyre::eyre::anyhow!("{err}"))
+                        .expect("failed to get embeddings");
+
+                    debug_assert!(!embeddings.is_empty());
+
+                    eprintln!("[DEBUG] sending vector embeddings from llama_cpp thread");
+                    from_llama_thread
+                        .sender
+                        .send(VectorEmbedding(
+                            embeddings.into_iter().map(|e| e as f64).collect(),
+                        ))
+                        .expect("failed to send embeddings from llama_cpp thread");
+
+                    // match op {
+                    //     Op::CreateEmbeddings(prompt) => {}
+                    //     Op::Predict(user_msg) => {
+                    //         match llama.predict(
+                    //             format!(
+                    //                 "<|system|>\n</s>\n<|user|>\n{}</s>\n<|assistant|>",
+                    //                 user_msg
+                    //             )
+                    //             .into(),
+                    //             predict_options,
+                    //         ) {
+                    //             Ok(result) => {
+                    //                 if let Err(e) = response_tx.send(result) {
+                    //                     eprintln!("[WARN] {}", e)
+                    //                 }
+                    //             }
+                    //             Err(e) => {
+                    //                 eprintln!("[WARN] {}", e)
+                    //             }
+                    //         }
+                    //     }
+                    // }
+                }
+            });
+
+            Self {
+                emmbeddings_channel: Arc::new(Mutex::new(from_main_thread)),
+                spawn_thread: joinhandle,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Llm for LlamaCpp {
+        async fn create_embeddings(&self, text: String) -> color_eyre::Result<VectorEmbedding> {
+            let channel = self.emmbeddings_channel.lock().unwrap();
+
+            channel
+                .sender
+                .send(text)
+                .expect("failed to call the llama model");
+
+            let em = channel.receiver.recv()?;
+
+            Ok(em)
+        }
+
+        async fn create_multiple_embeddings(&self, chunks: Vec<Chunk>) -> Vec<CompleteChunk> {
+            let mut future_set = JoinSet::new();
+
+            for (idx, chunk) in chunks.into_iter().enumerate() {
+                self.emmbeddings_channel
+                    .lock()
+                    .unwrap()
+                    .sender
+                    .send(chunk.content.clone())
+                    .expect("failed to call the llama model");
+
+                let response_rx = Arc::clone(&self.emmbeddings_channel);
+
+                let task_future = async move {
+                    let result = response_rx.lock().unwrap().receiver.recv();
+
+                    eprintln!("[DEBUG] received emebeddings for chunk {idx}");
+
+                    result.map(|em| chunk.complete_with(em.into()))
+                };
+
+                future_set.spawn(task_future);
+            }
+
+            let mut created_embeddings = vec![];
+
+            while let Some(res) = future_set.join_next().await {
+                match res {
+                    Ok(result) => match result {
+                        Ok(value) => {
+                            created_embeddings.push(value);
+                        }
+                        Err(err) => {
+                            eprintln!("[ERROR] failed to created embeddings for a prompt: {err}");
+                        }
+                    },
+                    Err(err) => {
+                        eprintln!("[ERROR] failed to created embeddings for a prompt: {err}");
+                    }
+                }
+            }
+
+            created_embeddings
+        }
+    }
+
+    mod channel {
+        use std::sync::mpsc::{channel, Receiver, Sender};
+
+        pub struct ChannelPipe<T, R> {
+            pub sender: Sender<T>,
+            pub receiver: Receiver<R>,
+        }
+
+        pub fn duplex_channel<T, R>() -> (ChannelPipe<T, R>, ChannelPipe<R, T>) {
+            let (t_tx, t_rx) = channel::<T>();
+            let (r_tx, r_rx) = channel::<R>();
+
+            (
+                ChannelPipe {
+                    sender: t_tx,
+                    receiver: r_rx,
+                },
+                ChannelPipe {
+                    sender: r_tx,
+                    receiver: t_rx,
+                },
+            )
         }
     }
 }
