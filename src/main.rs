@@ -17,23 +17,30 @@ struct Cli {
     command: CliCommand,
 
     #[command(flatten)]
-    ollama: EnableOllama,
+    #[group(id = "inhousellm")]
+    inhousellm: UseInHouseLlama,
 
-    /// The llama model to use (a .gguf file).
-    #[arg(short, long, conflicts_with = "ollama", required = true)]
-    model: Option<PathBuf>,
+    /// Ip address serving Ollama api, assuming port 11434
+    #[arg(global = true, long, conflicts_with = "inhousellm")]
+    ollama_ip: Option<IpAddr>,
 }
 
 #[derive(Args)]
-#[group(id = "ollama")]
-struct EnableOllama {
-    /// Use Ollama
-    #[arg(global = true, long = "ollama")]
-    enabled: bool,
+#[group(id = "inhousellm")]
+struct UseInHouseLlama {
+    /// Don't use ollama, use llama more directly [Experimental/Not Recommended]
+    #[arg(
+        global = true,
+        long = "no-ollama",
+        default_value = "false",
+        group = "inhousellm",
+        requires = "model"
+    )]
+    selected: bool,
 
-    /// Ip address serving Ollama api, assuming port 11434
-    #[arg(global = true, long)]
-    ollama_ip: Option<IpAddr>,
+    /// The llama model to use (a .gguf file).
+    #[arg(global = true, short, long)]
+    model: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -63,9 +70,20 @@ enum CliCommand {
 
 impl Cli {
     fn choose_llm(&self) -> Box<dyn llm::Llm> {
-        if self.ollama.enabled {
+        if self.inhousellm.selected {
+            Box::new(
+                llm::LlamaLlmChain::new(
+                    self.inhousellm
+                        .model
+                        .clone()
+                        .expect("no llama model provided: clap should have caught this")
+                        .to_str()
+                        .expect("path of the model given should be in valid utf-8"),
+                )
+                .expect("failed to instantiate llama"),
+            )
+        } else {
             let ip = self
-                .ollama
                 .ollama_ip
                 .unwrap_or(Ipv4Addr::new(127, 0, 0, 1).into())
                 .to_string();
@@ -74,17 +92,6 @@ impl Cli {
                 "llama2:latest",
                 Ollama::new(format!("http://{ip}"), 11434),
             ))
-        } else {
-            Box::new(
-                llm::LlamaLlmChain::new(
-                    self.model
-                        .clone()
-                        .expect("no llama model provided: clap should have caught this")
-                        .to_str()
-                        .expect("path of the model given should be in valid utf-8"),
-                )
-                .expect("failed to instantiate llama"),
-            )
         }
     }
 }

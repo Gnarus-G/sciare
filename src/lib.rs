@@ -126,11 +126,7 @@ pub async fn save_document<'s, Splitter: splits::TextSplitter>(
 }
 
 pub mod llm {
-    use std::{
-        mem,
-        sync::{Arc, Mutex},
-        thread::JoinHandle,
-    };
+    use std::{mem, sync::Arc};
 
     use async_trait::async_trait;
     use ollama_rs::Ollama;
@@ -209,11 +205,9 @@ pub mod llm {
         }
     }
 
-    use llm_chain::executor;
     use llm_chain::options;
     use llm_chain::options::*;
-    use llm_chain::traits::{Embeddings, Executor};
-    use llm_chain::{parameters, prompt};
+    use llm_chain::traits::Embeddings;
 
     pub struct LlamaLlmChain {
         // exec: llm_chain_llama::Executor,
@@ -222,35 +216,6 @@ pub mod llm {
 
     impl LlamaLlmChain {
         pub fn new(model: &str) -> color_eyre::Result<Self> {
-            // let opts = options!(
-            //     Model: ModelRef::from_path(model), // Notice that we reference the model binary path
-            //     ModelType: "llama",
-            //     MaxContextSize: 512_usize,
-            //     NThreads: 4_usize,
-            //     MaxTokens: 0_usize,
-            //     TopK: 40_i32,
-            //     TopP: 0.95,
-            //     TfsZ: 1.0,
-            //     TypicalP: 1.0,
-            //     Temperature: 0.8,
-            //     RepeatPenalty: 1.1,
-            //     RepeatPenaltyLastN: 64_usize,
-            //     FrequencyPenalty: 0.0,
-            //     PresencePenalty: 0.0,
-            //     Mirostat: 0_i32,
-            //     MirostatTau: 5.0,
-            //     MirostatEta: 0.1,
-            //     PenalizeNl: true,
-            //     StopSequence: vec!["\n".to_string()]
-            // );
-            //
-            // let exec = llm_chain_llama::Executor::new_with_options(opts)?;
-
-            // let res = prompt!("I love Rust because")
-            //     .run(&parameters!(), &exec)
-            //     .await?;
-            // println!("{}", res.to_immediate().await?);
-
             let opts = options!(
                 Model: ModelRef::from_path(model), // Notice that we reference the model binary path
                 ModelType: "llama",
