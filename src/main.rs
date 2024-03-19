@@ -75,13 +75,16 @@ impl Cli {
                 Ollama::new(format!("http://{ip}"), 11434),
             ))
         } else {
-            Box::new(llm::LlamaCpp::new(
-                self.model
-                    .clone()
-                    .expect("no llama model provided: clap should have caught this")
-                    .to_str()
-                    .expect("path of the model given should be in valid utf-8"),
-            ))
+            Box::new(
+                llm::LlamaLlmChain::new(
+                    self.model
+                        .clone()
+                        .expect("no llama model provided: clap should have caught this")
+                        .to_str()
+                        .expect("path of the model given should be in valid utf-8"),
+                )
+                .expect("failed to instantiate llama"),
+            )
         }
     }
 }
