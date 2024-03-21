@@ -9,6 +9,7 @@ use std::{
     path::PathBuf,
     str::FromStr,
 };
+use tokio_stream::StreamExt;
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -61,6 +62,16 @@ enum CliCommand {
     Search {
         /// Search-phrase by which to match semantically.
         phrase: String,
+
+        #[arg(short, long, default_value = "20")]
+        /// Maximum number of document chunks to consider as matches.
+        limit: usize,
+    },
+
+    /// Ask a question, and get an answer that considers information across all the content saved.
+    Ask {
+        /// Question/Query to ask the language model.
+        q: String,
 
         #[arg(short, long, default_value = "20")]
         /// Maximum number of document chunks to consider as matches.
@@ -172,6 +183,15 @@ async fn main() -> color_eyre::Result<()> {
                 println!("{}...", &chunk.content);
                 println!();
             }
+        }
+        CliCommand::Ask { q, limit } => {
+            let chunks = search_documents(&context, q.clone(), limit).await?;
+            let mut stream = context.llm.answer_query_stream(q, chunks).await?;
+
+            while let Some(Ok(ans_token)) = stream.next().await {
+                print!("{ans_token}");
+            }
+            println!();
         }
     };
 

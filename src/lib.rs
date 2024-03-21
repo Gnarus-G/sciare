@@ -129,15 +129,28 @@ pub mod llm {
     use std::{mem, sync::Arc};
 
     use async_trait::async_trait;
+    use color_eyre::eyre::eyre;
+    use ollama_rs::generation::chat::request::ChatMessageRequest;
+    use ollama_rs::generation::chat::{ChatMessage, ChatMessageResponseStream};
     use ollama_rs::Ollama;
     use tokio::task::JoinSet;
+    use tokio_stream::StreamExt;
 
     use crate::{Chunk, CompleteChunk, VectorEmbedding};
+
+    pub type StreamResponse = std::pin::Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<String, color_eyre::Report>> + Send>,
+    >;
 
     #[async_trait]
     pub trait Llm {
         async fn create_embeddings(&self, text: String) -> color_eyre::Result<VectorEmbedding>;
         async fn create_multiple_embeddings(&self, chunks: Vec<Chunk>) -> Vec<CompleteChunk>;
+        async fn answer_query_stream(
+            &self,
+            query: String,
+            documunent_chunks: Vec<Chunk>,
+        ) -> color_eyre::Result<StreamResponse>;
     }
 
     pub struct OllamaLlm {
@@ -203,6 +216,52 @@ pub mod llm {
 
             created_embeddings
         }
+
+        async fn answer_query_stream(
+            &self,
+            q: String,
+            documunent_chunks: Vec<Chunk>,
+        ) -> color_eyre::Result<StreamResponse> {
+            let mut messages: Vec<_> = documunent_chunks
+                .into_iter()
+                .map(|doc_chunk| {
+                    ChatMessage::new(
+                        ollama_rs::generation::chat::MessageRole::System,
+                        format!(
+                            r#"Consider this excerpt from the document {}, on page {}:
+                            {}"#,
+                            doc_chunk.document_name, doc_chunk.page_number, doc_chunk.content
+                        ),
+                    )
+                })
+                .collect();
+
+            messages.push(ChatMessage::new(
+                ollama_rs::generation::chat::MessageRole::System,
+                "You are a knowledgeable expert on many subjects. As you consider all excerpts from the documents. Respond to the query from this person.".to_string(),
+            ));
+
+            messages.push(ChatMessage::new(
+                ollama_rs::generation::chat::MessageRole::User,
+                q,
+            ));
+
+            let stream: ChatMessageResponseStream = self
+                .ollama
+                .send_chat_messages_stream(ChatMessageRequest::new(self.model.clone(), messages))
+                .await?;
+
+            let stream = Box::new(stream.map(|res| {
+                res.map_err(|_| eyre!("failed to get ollama chat response"))
+                    .and_then(|ans| {
+                        ans.message
+                            .ok_or(eyre!("didn't get a message back from ollama"))
+                    })
+                    .map(|ans| ans.content)
+            }));
+
+            Ok(std::pin::Pin::from(stream))
+        }
     }
 
     use llm_chain::options;
@@ -255,6 +314,14 @@ pub mod llm {
                     chunk.complete_with(VectorEmbedding::from(embeddings).into())
                 })
                 .collect::<Vec<_>>()
+        }
+
+        async fn answer_query_stream(
+            &self,
+            _q: String,
+            _documunent_chunks: Vec<Chunk>,
+        ) -> color_eyre::Result<StreamResponse> {
+            todo!()
         }
     }
 }
