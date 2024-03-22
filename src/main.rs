@@ -80,6 +80,12 @@ enum CliCommand {
         limit: usize,
     },
     Config(config::ConfigArgs),
+
+    /// Generate a completions file for a specified shell
+    Completion {
+        // The shell for which to generate completions
+        shell: clap_complete::Shell,
+    },
 }
 
 impl Cli {
@@ -202,6 +208,12 @@ async fn main() -> color_eyre::Result<()> {
             println!();
         }
         CliCommand::Config(c) => c.handle()?,
+        CliCommand::Completion { shell } => clap_complete::generate(
+            shell,
+            &mut <Cli as clap::CommandFactory>::command(),
+            "sciare",
+            &mut std::io::stdout(),
+        ),
     };
 
     return Ok(());
