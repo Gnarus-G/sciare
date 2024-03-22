@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT document_name, content, page_number, content_embedding FROM chunk",
+  "describe": {
+    "columns": [
+      {
+        "name": "document_name",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "page_number",
+        "ordinal": 2,
+        "type_info": "Int64"
+      },
+      {
+        "name": "content_embedding",
+        "ordinal": 3,
+        "type_info": "Blob"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7f9e228a956abee062fe4452f0277b7b8416418ef8e08260cd6f9fd37c08ffe4"
+}

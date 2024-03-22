@@ -116,8 +116,13 @@ async fn main() -> color_eyre::Result<()> {
 
     let cli = Cli::parse();
 
-    let options = SqliteConnectOptions::from_str("sqlite:./data.db")?;
+    let cfg = config::MyConfig::load()?;
+    let db_url = format!("sqlite:{}", cfg.db_path.display());
+
+    let options = SqliteConnectOptions::from_str(&db_url)?.create_if_missing(true);
     let db_connection = SqlitePool::connect_with(options).await?;
+
+    sqlx::migrate!().run(&db_connection).await?;
 
     let context = context::Context {
         conn_pool: db_connection,
