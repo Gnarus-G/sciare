@@ -10,8 +10,7 @@ strategy to use relevant info from documents to extend the llm's strategy. Using
 - [x] Download
 - [x] Search (Semantic Search)
 - [x] Ask (Inference)
-- [ ] List Documents
-- [ ] Delete Document and all its chunks
+- [ ] Chat Interface
 
 ## Install
 
@@ -46,6 +45,8 @@ CLI tool to manage documents, doing semantic searches through documents, and pro
 Usage: sciare [OPTIONS] <COMMAND>
 
 Commands:
+  list        List all the documents in the database
+  delete      Delete a document from the database
   upload      Upload a file to index
   download    Download a file from the internet
   search      Search across all the content saved
@@ -55,8 +56,6 @@ Commands:
   help        Print this message or the help of the given subcommand(s)
 
 Options:
-      --no-ollama              Don't use ollama, use llama more directly [Experimental/Not Recommended]
-  -m, --model <MODEL>          The llama model to use (a .gguf file)
       --ollama-ip <OLLAMA_IP>  Ip address serving Ollama api, assuming port 11434
   -h, --help                   Print help
   -V, --version                Print version
