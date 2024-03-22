@@ -46,6 +46,19 @@ struct UseInHouseLlama {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
+    /// List all the documents in the database.
+    List {
+        /// Show more info about each document
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Delete a document from the database.
+    Delete {
+        /// Name of the document to delete
+        name: String,
+    },
+
     /// Upload a file to index.
     Upload {
         /// path to a file (pdf only)
@@ -206,6 +219,39 @@ async fn main() -> color_eyre::Result<()> {
                 print!("{ans_token}");
             }
             println!();
+        }
+        CliCommand::List { verbose } => {
+            let docs = sqlx::query!(r#"select * from document"#)
+                .fetch_all(&context.conn_pool)
+                .await?;
+
+            if docs.is_empty() {
+                eprintln!("[INFO] there are no documents in the database");
+            } else {
+                eprintln!("[INFO] fetched a list of documents in the database");
+            }
+
+            for doc in docs {
+                println!("{}", doc.name);
+                if verbose {
+                    println!("  ↳ added on {}", doc.saved_at);
+                }
+            }
+        }
+        CliCommand::Delete { name } => {
+            eprintln!(
+                "[WARN] about to delete document '{}' and all its saved excerpts",
+                name
+            );
+            sqlx::query!(r#"delete from chunk where document_name = ?"#, name)
+                .execute(&context.conn_pool)
+                .await?;
+
+            sqlx::query!(r#"delete from document where name = ?"#, name)
+                .execute(&context.conn_pool)
+                .await?;
+
+            eprintln!("[INFO] Successfully Deleted {name}");
         }
         CliCommand::Config(c) => c.handle()?,
         CliCommand::Completion { shell } => clap_complete::generate(

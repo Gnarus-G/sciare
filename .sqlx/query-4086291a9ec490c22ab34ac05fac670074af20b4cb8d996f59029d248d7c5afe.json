@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "select name from document",
+  "describe": {
+    "columns": [
+      {
+        "name": "name",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4086291a9ec490c22ab34ac05fac670074af20b4cb8d996f59029d248d7c5afe"
+}
