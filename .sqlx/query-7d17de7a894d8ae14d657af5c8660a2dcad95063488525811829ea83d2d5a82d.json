@@ -1,20 +1,26 @@
 {
   "db_name": "SQLite",
-  "query": "select name from document",
+  "query": "select * from document",
   "describe": {
     "columns": [
       {
         "name": "name",
         "ordinal": 0,
         "type_info": "Text"
+      },
+      {
+        "name": "saved_at",
+        "ordinal": 1,
+        "type_info": "Datetime"
       }
     ],
     "parameters": {
       "Right": 0
     },
     "nullable": [
+      false,
       false
     ]
   },
-  "hash": "4086291a9ec490c22ab34ac05fac670074af20b4cb8d996f59029d248d7c5afe"
+  "hash": "7d17de7a894d8ae14d657af5c8660a2dcad95063488525811829ea83d2d5a82d"
 }
