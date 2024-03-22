@@ -1,3 +1,5 @@
+mod config;
+
 use clap::{Args, Parser, Subcommand};
 use ollama_rs::Ollama;
 use poppler::PopplerDocument;
@@ -77,6 +79,7 @@ enum CliCommand {
         /// Maximum number of document chunks to consider as matches.
         limit: usize,
     },
+    Config(config::ConfigArgs),
 }
 
 impl Cli {
@@ -193,6 +196,7 @@ async fn main() -> color_eyre::Result<()> {
             }
             println!();
         }
+        CliCommand::Config(c) => c.handle()?,
     };
 
     return Ok(());

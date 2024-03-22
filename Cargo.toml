@@ -24,3 +24,7 @@ async-trait = "0.1.77"
 llm-chain-llama = { git = "https://github.com/sobelio/llm-chain" }
 llm-chain = { git = "https://github.com/sobelio/llm-chain" }
 tokio-stream = "0.1.15"
+confy = { version = "0.6.1", features = ["ron_conf"], default-features = false }
+serde = { version = "1.0.197", features = ["derive"] }
+ron = "0.8.1"
+serde_json = "1.0.114"
