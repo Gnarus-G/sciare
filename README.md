@@ -1,7 +1,7 @@
 # Sciare
 
 CLI tool to manage documents, doing semantic searches through documents, and prompting usign the RAG (Retrieval Augmented Generation)
-strategy to use relevant info from documents to extend the llm's strategy.
+strategy to use relevant info from documents to extend the llm's strategy. Using the llama2-uncensored model.
 
 ## Features
 

@@ -109,7 +109,7 @@ impl Cli {
                 .to_string();
 
             Box::new(llm::OllamaLlm::new(
-                "llama2:latest",
+                "llama2-uncensored:latest",
                 Ollama::new(format!("http://{ip}"), 11434),
             ))
         }
