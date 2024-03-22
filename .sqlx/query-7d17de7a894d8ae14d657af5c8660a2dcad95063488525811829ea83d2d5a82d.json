@@ -9,8 +9,13 @@
         "type_info": "Text"
       },
       {
-        "name": "saved_at",
+        "name": "source_uri",
         "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "saved_at",
+        "ordinal": 2,
         "type_info": "Datetime"
       }
     ],
@@ -18,6 +23,7 @@
       "Right": 0
     },
     "nullable": [
+      false,
       false,
       false
     ]

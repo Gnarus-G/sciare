@@ -4,7 +4,10 @@ use clap::{crate_name, Args, Parser, Subcommand};
 use ollama_rs::Ollama;
 use poppler::PopplerDocument;
 use reqwest::Url;
-use sciare::{context, document_kind::PdfDocument, llm, save_document, search_documents, splits};
+use sciare::{
+    context, document_kind::PdfDocument, llm, primitives::Document, save_document,
+    search_documents, splits,
+};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use std::{
     net::{IpAddr, Ipv4Addr},
@@ -151,17 +154,12 @@ async fn main() -> color_eyre::Result<()> {
 
     match cli.command {
         CliCommand::Upload { file } => {
-            let name = file
-                .file_name()
-                .expect("should be a file path, not a directory")
-                .to_str()
-                .expect("file path should be in valid utf8");
+            let document = PopplerDocument::new_from_file(&file, None)?;
+            let document = PdfDocument::new_from_path(file, document);
 
-            save_document(
-                &context,
-                &PdfDocument::new(name, PopplerDocument::new_from_file(&file, None)?),
-            )
-            .await?;
+            save_document(&context, &document).await?;
+
+            eprintln!("[INFO] uploaded file as {}", document.name());
         }
         CliCommand::Download { url } => {
             eprintln!("[INFO] downloading file: {url}");
@@ -172,30 +170,16 @@ async fn main() -> color_eyre::Result<()> {
                     "only links to pdfs are supported"
                 ));
             }
+            let url = response.url();
 
-            let name = response
-                .url()
-                .path_segments()
-                .map(|split| split.collect::<Vec<_>>().join("_"))
-                .unwrap_or_default();
-
-            let name = format!("{}_{}", response.url().domain().unwrap_or_default(), name);
-
-            if name.is_empty() {
-                return Err(color_eyre::eyre::anyhow!(
-                    "could not derive a name for this pdf document from the url"
-                ));
-            }
-
-            eprintln!("[INFO] downloaded pdf as {name}");
-
+            let url = url.clone();
             let mut data = response.bytes().await?.to_vec();
+            let document =
+                PdfDocument::new_from_url(url, PopplerDocument::new_from_data(&mut data, None)?)?;
 
-            save_document(
-                &context,
-                &PdfDocument::new(&name, PopplerDocument::new_from_data(&mut data, None)?),
-            )
-            .await?;
+            save_document(&context, &document).await?;
+
+            eprintln!("[INFO] downloaded pdf as {}", document.name());
         }
         CliCommand::Search { phrase, limit } => {
             let chunks = search_documents(&context, phrase, limit).await?;
@@ -234,7 +218,8 @@ async fn main() -> color_eyre::Result<()> {
             for doc in docs {
                 println!("{}", doc.name);
                 if verbose {
-                    println!("  ↳ added on {}", doc.saved_at);
+                    println!("  ↳ added on: {}", doc.saved_at);
+                    println!("  ↳ source:   {}", doc.source_uri);
                 }
             }
         }

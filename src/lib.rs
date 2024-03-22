@@ -74,10 +74,17 @@ pub async fn save_document<'s, Splitter: splits::TextSplitter>(
     }
 
     eprintln!("[INFO] saving the document");
-    sqlx::query!(r#"INSERT INTO document (name) VALUES (?)"#, name)
-        .execute(&ctx.conn_pool)
-        .await
-        .context("failed to save a document")?;
+
+    let document_source = document.get_source_uri().as_str();
+
+    sqlx::query!(
+        r#"INSERT INTO document (name, source_uri) VALUES (?, ?)"#,
+        name,
+        document_source
+    )
+    .execute(&ctx.conn_pool)
+    .await
+    .context("failed to save a document")?;
 
     eprintln!("[INFO] chunking documents");
     let chunks: Vec<_> = document
@@ -350,15 +357,47 @@ pub mod document_kind {
 
     pub struct PdfDocument {
         name: String,
+        source: primitives::Source,
         document: PopplerDocument,
     }
 
     impl PdfDocument {
-        pub fn new(name: &str, document: PopplerDocument) -> Self {
+        pub fn new_from_path(path: std::path::PathBuf, document: PopplerDocument) -> Self {
+            let name = path
+                .file_name()
+                .expect("should be a file path, not a directory")
+                .to_string_lossy()
+                .to_string();
+
             Self {
-                name: name.to_string(),
+                name,
+                source: primitives::Source::Path(path),
                 document,
             }
+        }
+
+        pub fn new_from_url(
+            url: reqwest::Url,
+            document: PopplerDocument,
+        ) -> color_eyre::Result<Self> {
+            let name = url
+                .path_segments()
+                .map(|split| split.collect::<Vec<_>>().join("_"))
+                .unwrap_or_default();
+
+            let name = format!("{}_{}", url.domain().unwrap_or_default(), name);
+
+            if name.is_empty() {
+                return Err(color_eyre::eyre::anyhow!(
+                    "could not derive a name for this pdf document from the url"
+                ));
+            }
+
+            Ok(Self {
+                name,
+                source: primitives::Source::Url(url),
+                document,
+            })
         }
     }
 
@@ -369,6 +408,10 @@ pub mod document_kind {
 
         fn get_number_of_pages(&self) -> usize {
             self.document.get_n_pages()
+        }
+
+        fn get_source_uri(&self) -> &primitives::Source {
+            &self.source
         }
 
         fn get_page(&self, page_num: usize) -> color_eyre::Result<String> {
@@ -386,13 +429,21 @@ pub mod document_kind {
 
     pub struct TextDocument {
         name: String,
+        source: primitives::Source,
         content: String,
     }
 
     impl TextDocument {
-        pub fn new(name: &str, content: String) -> Self {
+        pub fn new(path: std::path::PathBuf, content: String) -> Self {
+            let name = path
+                .file_name()
+                .expect("should be a file path, not a directory")
+                .to_string_lossy()
+                .to_string();
+
             Self {
-                name: name.to_string(),
+                name,
+                source: primitives::Source::Path(path),
                 content,
             }
         }
@@ -407,17 +458,38 @@ pub mod document_kind {
             1
         }
 
+        fn get_source_uri(&self) -> &primitives::Source {
+            &self.source
+        }
+
         fn get_page(&self, _page_num: usize) -> color_eyre::Result<String> {
             Ok(self.content.clone())
         }
     }
 }
 
-mod primitives {
+pub mod primitives {
+
+    pub enum Source {
+        Path(std::path::PathBuf),
+        Url(reqwest::Url),
+    }
+
+    impl Source {
+        pub fn as_str(&self) -> &str {
+            let s = match self {
+                Source::Url(url) => url.as_str(),
+                Source::Path(path) => path.to_str().expect("file path should be valid utf-8"),
+            };
+
+            s
+        }
+    }
 
     pub trait Document<'s> {
         fn name(&'s self) -> &'s str;
         fn get_number_of_pages(&self) -> usize;
+        fn get_source_uri(&self) -> &Source;
         fn get_page(&self, page_num: usize) -> color_eyre::Result<String>;
 
         fn get_text(&self) -> color_eyre::Result<Vec<String>> {

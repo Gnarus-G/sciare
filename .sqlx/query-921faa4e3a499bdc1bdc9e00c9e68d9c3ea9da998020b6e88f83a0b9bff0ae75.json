@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO document (name, source_uri) VALUES (?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "921faa4e3a499bdc1bdc9e00c9e68d9c3ea9da998020b6e88f83a0b9bff0ae75"
+}
