@@ -245,7 +245,8 @@ pub mod llm {
 
             messages.push(ChatMessage::new(
                 ollama_rs::generation::chat::MessageRole::System,
-                "You are a knowledgeable expert on many subjects. As you consider all excerpts from the documents. Respond to the query from this person.".to_string(),
+                r#"Your name is sciare. You are a knowledgeable expert on many subjects.
+                As you consider all the excerpts from these documents, prioritize that information above all else. Respond to the query from this user."#.to_string(),
             ));
 
             messages.push(ChatMessage::new(
