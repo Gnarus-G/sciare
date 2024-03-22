@@ -21,12 +21,8 @@ struct Cli {
     #[command(subcommand)]
     command: CliCommand,
 
-    #[command(flatten)]
-    #[group(id = "inhousellm")]
-    inhousellm: UseInHouseLlama,
-
     /// Ip address serving Ollama api, assuming port 11434
-    #[arg(global = true, long, conflicts_with = "inhousellm")]
+    #[arg(global = true, long)]
     ollama_ip: Option<IpAddr>,
 }
 
@@ -93,19 +89,20 @@ enum CliCommand {
 
 impl Cli {
     fn choose_llm(&self) -> Box<dyn llm::Llm> {
-        if self.inhousellm.selected {
-            Box::new(
-                llm::LlamaLlmChain::new(
-                    self.inhousellm
-                        .model
-                        .clone()
-                        .expect("no llama model provided: clap should have caught this")
-                        .to_str()
-                        .expect("path of the model given should be in valid utf-8"),
-                )
-                .expect("failed to instantiate llama"),
-            )
-        } else {
+        // if self.inhousellm.selected {
+        //            Box::new(
+        //                llm::LlamaLlmChain::new(
+        //                    self.inhousellm
+        //                        .model
+        //                        .clone()
+        //                        .expect("no llama model provided: clap should have caught this")
+        //                        .to_str()
+        //                        .expect("path of the model given should be in valid utf-8"),
+        //                )
+        //                .expect("failed to instantiate llama"),
+        //            )
+        //        } else
+        {
             let ip = self
                 .ollama_ip
                 .unwrap_or(Ipv4Addr::new(127, 0, 0, 1).into())
