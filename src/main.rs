@@ -1,6 +1,6 @@
 mod config;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{crate_name, Args, Parser, Subcommand};
 use ollama_rs::Ollama;
 use poppler::PopplerDocument;
 use reqwest::Url;
@@ -13,6 +13,8 @@ use std::{
 };
 use tokio_stream::StreamExt;
 
+/// CLI tool to manage documents, doing semantic searches through documents, and prompting usign the RAG (Retrieval Augmented Generation)
+/// strategy to use relevant info from documents to extend the llm's strategy.
 #[derive(Parser)]
 #[command(author, version, about)]
 struct Cli {
@@ -65,7 +67,7 @@ enum CliCommand {
         /// Search-phrase by which to match semantically.
         phrase: String,
 
-        #[arg(short, long, default_value = "20")]
+        #[arg(short, long, default_value = "5")]
         /// Maximum number of document chunks to consider as matches.
         limit: usize,
     },
@@ -79,6 +81,7 @@ enum CliCommand {
         /// Maximum number of document chunks to consider as matches.
         limit: usize,
     },
+    /// Manage configuration values.
     Config(config::ConfigArgs),
 
     /// Generate a completions file for a specified shell
@@ -211,7 +214,7 @@ async fn main() -> color_eyre::Result<()> {
         CliCommand::Completion { shell } => clap_complete::generate(
             shell,
             &mut <Cli as clap::CommandFactory>::command(),
-            "sciare",
+            crate_name!(),
             &mut std::io::stdout(),
         ),
     };
